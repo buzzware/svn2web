@@ -1,0 +1,278 @@
+#!/usr/bin/php
+<?php
+// if php is not running as CLI, STDERR is not defined by default and cause error (dont print the error on svn log)
+if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
+
+$thisDir = dirname($_SERVER['argv'][0]);
+if (empty($thisDir) or ($thisDir == ".")) { $thisDir = getcwd(); }
+
+$scriptName = basename($_SERVER['argv'][0]);
+array_shift($_SERVER['argv']);
+
+$usage = "$scriptName REPOS-PATH REVISION\n";
+if (count($_SERVER['argv']) < 2) {
+   echo $usage; exit(1);
+}
+
+$repository = $_SERVER['argv'][0];
+$revision = $_SERVER['argv'][1];
+$transaction = null;
+if (preg_match('/^\d+$/', $revision)) {
+  $revOrTransaction = "-r $revision";
+}
+else { // Used as pre-commit hook: given transaction name:
+  $transaction = $revision;
+  $revision = null;
+  $revOrTransaction = "-t $transaction";
+}
+          
+// First: use svnlook to get a list of the changed files/dirs:
+$changed = `svnlook changed $revOrTransaction $repository`;
+
+$lines = explode("\n",$changed);
+
+$extraWheres = array();
+$dirsAdded = array();
+$dirsDeleted = array();
+$filesModified = array();
+$filesDeleted = array();
+$propCache = array();
+
+foreach ($lines AS $line) {
+  preg_match('/^(.).\s*(.*)/', $line, $matches);
+  if (count($matches) != 3) { continue; }
+
+  $what = $matches[1];
+  $where = $matches[2];
+  $is_dir = (substr($where, -1) == "/");
+
+  // For deleted stuff: wanna use previous (before-deleted) revision to get
+  // svn2web property:
+  if ($what == "D") {
+    if ($revision) { $prevRevision = $revision-1; }
+    else { $prevRevision = intval($transaction); } // Will be, e.g. 20-1 
+    list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache, $prevRevision);
+  }
+  else {
+    // Conscious decision here to use latest&greatest revision for what to copy where:
+    list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache);
+  }
+  // this get the svn2web-optiosn prop, is not very well testet yet...
+  $options = getSVN2WebOptionsProp($where, $repository, $prevRevision);
+
+  if ($servers === null or empty($servers)) { continue; }
+  
+  $s = explode("\n", $servers);
+
+  if ($is_dir and $what == "A") {
+    foreach ($s AS $server) {
+      $dirsAdded[$server][] = array($where, $relativePath."/");
+      
+      // use svnlook to get a list of the implicitly added files/dirs:
+      $subWhere = `svnlook tree --full-paths $revOrTransaction $repository $where`;
+      $subWheres = explode("\n",$subWhere);
+      $extraWheres = array_merge($extraWheres, $subWheres);
+    }
+  }
+  elseif ($what == "A") {
+    foreach ($s AS $server) {
+      $filesModified[$server][] = array($where, $relativePath);
+    }
+  }
+  elseif ($is_dir and $what == "D") {
+    foreach ($s AS $server) {
+      $dirsDeleted[$server][] =  array($where, $relativePath."/");
+    }
+  }
+  elseif ($what == "D") {
+    foreach ($s AS $server) {
+      $filesDeleted[$server][] = array($where, $relativePath);
+    }
+  }
+  elseif ($what == "U") {
+    foreach ($s AS $server) {
+      $filesModified[$server][] = array($where, $relativePath);
+    }
+  }
+}
+
+foreach ($extraWheres AS $where) {
+  $is_dir = (substr($where, -1) == "/");
+
+  // Conscious decision here to use latest&greatest revision for what to copy where:
+  list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache);
+
+  if ($servers === null or empty($servers)) { continue; }
+  
+  $s = explode("\n", $servers);
+
+  if ($is_dir) {
+    foreach ($s AS $server) {
+      $dirsAdded[$server][] = array($where, $relativePath."/");
+    }
+  }
+  else {
+    foreach ($s AS $server) {
+      $filesModified[$server][] = array($where, $relativePath);
+    }
+  }
+}
+
+$todelete = array_merge_recursive($filesDeleted, $dirsDeleted);
+$tocopy = array_merge_recursive($dirsAdded, $filesModified);
+
+foreach ($todelete AS $server => $stuff) {
+  preg_match('/(.*?):(.*)/', $server, $matches);
+  if (count($matches) != 3) { echo "UNRECOGNIZED protocol: $server\n"; continue; }
+  $howToConnect = $matches[1];
+  $whereToConnect = escapeshellarg($matches[2]);
+
+  $deleteArgs = "";
+  foreach ($stuff AS $f) {
+    $deleteArgs .= " ".escapeshellarg($f[1]);
+  }
+
+  // file: built-in, rest handled externally:
+  if ($howToConnect == "file") {
+    echo `(cd $whereToConnect; rm -rf $deleteArgs)`;
+  }
+  else {
+    echo `$thisDir/remove_$howToConnect $whereToConnect $deleteArgs`;
+  }
+}
+
+$tempDir = "/tmp/svn2web_".getmypid();
+MakeDirectory($tempDir);
+if (chdir($tempDir) === FALSE) { fwrite(STDERR, "Cannot chdir to temporary dir: $tempDir\n"); exit(1); }
+$errors = array();
+
+foreach ($tocopy AS $server => $stuff) {
+  preg_match('/(.*?):(.*)/', $server, $matches);
+  if (count($matches) != 3) { echo "UNRECOGNIZED protocol: $server\n"; continue; }
+  $howToConnect = $matches[1];
+  $whereToConnect = escapeshellarg($matches[2]);
+
+  $dirsToCreate = "";
+  $copyArgs = "";
+  $haveDotFile = false;
+  foreach ($stuff AS $f) {
+    if (substr($f[0], -1, 1) == "/") {
+      $dirsToCreate .= " ".escapeshellarg($f[1]);
+    }
+    else {
+      $d = dirname($f[1]);
+      if (!empty($d)) { MakeDirectory("$tempDir/$d"); }
+      $rf = escapeshellarg($f[0]);
+      $to = escapeshellarg($f[1]);
+      if ($f[1][0] == ".") { $haveDotFile = true; }
+      `svnlook cat $revOrTransaction $repository $rf > $to`;
+      $copyArgs .= " ".$to;
+    }
+  }
+
+  // file: built-in, rest handled externally:
+  if ($howToConnect == "file") {
+    if (!is_dir($whereToConnect)) {
+      runCommand("mkdir -p $whereToConnect", $errors);
+    }
+    if (!empty($dirsToCreate)) {
+      runCommand("cd $whereToConnect && mkdir -p $dirsToCreate", $errors);
+    }
+    if (!empty($copyArgs)) {
+      runCommand("cp -r * $whereToConnect", $errors);
+      if ($haveDotFile) {
+        runCommand("cp -r .??* $whereToConnect", $errors);
+      }
+    }
+  }
+  else {
+    runCommand("$thisDir/put_$howToConnect $whereToConnect ".escapeshellarg($options)." ".escapeshellarg($tempDir)." $copyArgs", $errors);
+  }
+}
+chdir("/");
+`rm -rf $tempDir`;
+
+if (!empty($errors)) {
+   fwrite(STDERR, implode("\n", $errors));
+   exit(1);
+}
+exit(0);
+
+/**
+ * Helper: exec a shell command, saving error output in $errors array.
+ */
+function runCommand($command, &$errors)
+{
+  exec("($command) 2>&1", $output, $err);
+  if ($err) { $errors[] = "$command: exit code ".intval($err)." --> ".implode("\n", $output); }
+  return $err;
+}
+
+/**
+ * Helper: recursive mkdir
+ */
+function MakeDirectory($dir, $mode = 0755)
+{
+  if (is_dir($dir) || @mkdir($dir,$mode)) return TRUE;
+  if (!MakeDirectory(dirname($dir),$mode)) return FALSE;
+  return @mkdir($dir,$mode);
+}
+
+/**
+ * Figure out where (if anywhere) path $where should be copied.
+ * Looks for the svn2web property, all the way up the path--
+ * uses the first it finds.
+ * 
+ * Returns an array of two elements-- the svn2web property, and the
+ * relative path from where that property is set in the tree down
+ * to $where.  Returns array(null,null) if no svn2web properties set.
+ */
+function getSVN2WebProp($where, $repository, &$propCache, $revision=null)
+{
+  if (empty($where)) { return array(null, null); }
+  if (isset($propCache[$where])) { return $propCache[$where]; }
+  
+  $w = escapeshellarg($where);
+  $r = ""; if ($revision) { $r = "-r $revision"; }
+  $props = `svnlook proplist $r $repository $w`;
+
+  $servers = null;
+  if (strpos($props, 'svn2web') !== FALSE) {
+    $servers = `svnlook propget $r $repository svn2web $w`;
+    $servers = trim($servers);
+  }
+  $result = array(null, null);
+  if (!empty($servers)) {
+     $result[0] = $servers;
+     $result[1] = "";
+  }
+  elseif (dirname($where) != $where) {
+    $r = getSVN2WebProp(dirname($where), $repository, $propCache, $revision);
+    if ($r[0]) {
+      $f = basename($where);
+      $result[0] = $r[0];
+      $result[1] = (empty($r[1]) ? $f : $r[1]."/".$f);
+    }
+  }
+  $propCache[$where] = $result;
+  return $result;
+}
+
+//Alpha function to add options to svn, not yet documented
+function getSVN2WebOptionsProp($where, $repository, $revision=null)
+{
+  if (empty($where)) { return array(null, null); }
+  
+  $w = escapeshellarg(dirname($where));
+  $r = ""; if ($revision) { $r = "-r $revision"; }
+  $props = `svnlook proplist $r $repository $w`;
+
+  $options = null;
+  if (strpos($props, 'svn2web-options') !== FALSE) {
+    $options = `svnlook propget $r $repository svn2web-options $w`;
+    $options = trim($options);
+  } else { $options = ''; }
+  return $options;
+}
+
+?>

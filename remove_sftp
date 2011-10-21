@@ -1,0 +1,80 @@
+#!/usr/bin/php
+<?php
+// Used by the new cvs to web to remove files (using expect and sftp
+// command-line utils) from a server.
+//
+// USAGE:  remove_sftp username:password@machine:/folder file1 file2...
+//
+if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
+
+$remoteStuff = $_SERVER['argv'][1];
+array_shift($_SERVER['argv']);
+array_shift($_SERVER['argv']);
+
+if (preg_match('/(.*):(.*)@(.*):(.*)/', $remoteStuff, $matches)) {
+  $user = $matches[1];
+  $password = $matches[2];
+  $machine = $matches[3];
+  $dir = $matches[4];
+}
+elseif (preg_match('/(.*)@(.*):(.*)/', $remoteStuff, $matches)) {
+  $user = $matches[1];
+  $password = "";
+  $machine = $matches[2];
+  $dir = $matches[3];
+}
+else {
+  fwrite(STDERR, "$remoteStuff  must be:  user:password@machine:dir\nYou sent: {$_SERVER['argv']}\n");
+  exit(1);
+}
+
+// Create list of FTP commands:
+$ftpCommands = array();
+$ftpCommands[] = "cd ".escapeshellarg($dir);
+
+foreach ($_SERVER['argv'] AS $f) {
+  if (substr($f, -1) == "/") {
+    $ftpCommands[] ="rm ".escapeshellarg("$f*");
+    $ftpCommands[] ="rmdir ".escapeshellarg($f);
+  } else {
+    $ftpCommands[] ="rm ".escapeshellarg($f);
+  }
+}
+$ftpCommands[] = "exit";
+
+// Use expect to run sftp (with password, if necessary):
+$expectFilename = tempnam("/tmp", "expect_commands");
+$expectFile = fopen($expectFilename, "w");
+fwrite($expectFile, "set timeout 120\n");
+fwrite($expectFile, "spawn -noecho sftp $user@$machine\n");
+$s = <<<EXPECTSTUFF
+expect {
+  "password:" { send "$password\r"; exp_continue }
+  "(yes/no)?" { send "yes\r"; exp_continue }
+  "Permission denied" { exit 1 }
+  "sftp>" { send "progress\r"  }
+  timeout { send_error "sftp timeout\n"; exit 1 }
+}  
+
+EXPECTSTUFF;
+fwrite($expectFile, $s);
+foreach ($ftpCommands AS $command) {
+  fwrite($expectFile, "expect {\n" );
+  fwrite($expectFile, " \"sftp>\" { send -- \"$command\r\" }\n" );
+  fwrite($expectFile, " \"Permission denied\" { exit 1 }\n" );
+  fwrite($expectFile, " timeout { send_error \"sftp timeout\\n\"; exit 1 } \n");
+  fwrite($expectFile, "}\n" );
+}
+fwrite($expectFile, "exit 0\n");
+fclose($expectFile);
+
+// Note: add -d to expect to help debug problems...
+exec("/usr/bin/expect -b $expectFilename 2>&1", $output, $err);
+
+unlink($expectFilename);
+
+if ($err) {
+   fwrite(STDERR, implode("\n", $output));
+   exit($err);
+}
+?>
