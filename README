@@ -1,0 +1,56 @@
+Subversion hook script to automatically copy committed files to a server-in-the-sky.
+Written in php.
+
+REQUIREMENTS:
+
+svn2web uses the following command-line programs:
+  php svnlook cp  rm  mkdir  cd
+If using ftp or sftp to upload files:
+  expect ftp sftp
+
+HOW TO USE:
+
+1) Uncompress svn2web somewhere on your box and give all the files execution
+permission.
+
+2) You need to exec svn2web script (previusly uncompressed) from your pre-commit hook. 
+The hooks directory is "root_of_repository/hooks", name must be "pre-commit" 
+and it must be executable.  Also, the hook MUST set an appropriate PATH;
+
+Normally when you create your repo your pre-commit hook have the name
+pre-commit.tmpl you must rename it and add execution permissions.
+
+  cd root_of_repository/hooks
+  mv pre-commit.tmpl pre-commit
+  chmod +x pre-commit
+
+Now edit the pre-commit file and add the lines to call svn2web (check the 
+last lines of this document).
+
+3) Then, add a "svn2web" property to the branch or directory that should
+get copied (e.g. on the trunk):
+  cd trunk
+  svn propset svn2web "sftp:username:password@machine:/path" .
+  svn commit -N -m "Upload commits to server." .
+
+Use:
+  file:/path    Copies to /path/ on the same machine as the svn repository.
+  ftp:username:password@machine:/path   Uses ftp to copy to another machine.
+  sftp:username:password@machine:/path  Uses sftp
+
+If a branch/directory should get copied multiple places, use svn
+propedit and list each on a separate line.
+
+Also, note that if a subdirectory has the svn2web property set, then
+that setting OVERRIDES the parent's setting.
+
+The put_ftp/put_sftp/remove_ftp/remove_sftp files must be executable,
+and must be in the same directory as the svn2web utility.
+
+EXAMPLE pre-commit HOOK:
+-------------------------
+#!/bin/bash
+export PATH=/usr/local/bin:/usr/bin:/bin
+svn2web $1 $2 >> /tmp/svn2web.log || exit 1
+exit 0
+
