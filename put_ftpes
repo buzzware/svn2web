@@ -1,0 +1,201 @@
+#!/usr/bin/php
+<?php
+// Used by the new cvs to web to ftp files (using expect and ftp
+// command-line utils) to a server.
+//
+// USAGE:  put_ftp username:password@machine:/folder options /absolute/path/to/local/files file1 file2 file3...
+//   (password is optional if ssh/ftp has been setup to not require it)
+//
+// Creates a batch 'expect' script to feed commands to ftp.
+//
+if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
+
+$remoteStuff = $_SERVER['argv'][1];
+$options = $_SERVER['argv'][2];
+$localStuff = $_SERVER['argv'][3];
+
+array_shift($_SERVER['argv']); //remove the script filename
+array_shift($_SERVER['argv']); //remove the connection string (remoteStuff)
+array_shift($_SERVER['argv']); //remove the local dir
+array_shift($_SERVER['argv']); //remove the options
+
+if (preg_match('/(.*):(.*)@(.*):(.*)/', $remoteStuff, $matches)) {
+  $user = $matches[1];
+  $password = $matches[2];
+  $machine = $matches[3];
+  $dir = $matches[4];
+}
+elseif (preg_match('/(.*)@(.*):(.*)/', $remoteStuff, $matches)) {
+  $user = $matches[1];
+  $password = "";
+  $machine = $matches[2];
+  $dir = $matches[3];
+}
+else {
+  fwrite(STDERR, "$remoteStuff  must be:  user:password@machine:dir\nYou sent: {$_SERVER['argv']}\n");
+  exit(1);
+}
+
+$dirs = array();
+$d = $dir;
+while ($d != "" && $d != "/" && $d != ".") {
+  array_unshift($dirs, $d);
+  $d = dirname($d);
+}
+array_shift($dirs); // Don't try to create root-level directory.
+
+// this works with BigCommerce :
+
+//#debug
+//set ftp:ssl-allow-anonymous yes
+//set ssl:verify-certificate off
+//set ftp:passive-mode on
+//set ftp:ssl-force on
+//set ftp:ssl-allow on
+//open -u s194379,password server3900.bigcommerce.com
+//lcd /Users/gary/repos/svn2web
+//cd "/content"
+//put "README" "README"
+//exit
+
+// Create list of FTP commands:
+$ftpCommands = array();
+//$ftpCommands[] = "debug";
+$ftpCommands[] = "set ftp:ssl-allow-anonymous yes";
+$ftpCommands[] = "set ssl:verify-certificate off";
+$ftpCommands[] = "set ftp:passive-mode on";
+$ftpCommands[] = "set ftp:ssl-force on";
+$ftpCommands[] = "set ftp:ssl-allow on";
+$ftpCommands[] = "open -u $user,$password $machine";
+//$ftpCommands[] = "prompt off";
+$ftpCommands[] = "lcd $localStuff";
+// $ftpCommands[] = "!pwd";
+
+foreach ($dirs AS $d) { // Simulate mkdir -p:
+  $ftpCommands[] = "mkdir \"$d\"";
+}
+$ftpCommands[] ="cd \"$dir\"";
+$cwd = "";  // Keep track of current working directory...
+foreach ($_SERVER['argv'] AS $f) {
+  putFile($ftpCommands, $f, $cwd);  // Puts files, creating directories as needed
+}
+$ftpCommands[] ="exit";
+
+// Now lets write a lftp script
+$script_name = tempnam("/tmp", "script.lftp");
+$script = fopen($script_name, "w");
+foreach ($ftpCommands AS $c) {
+	fwrite($script, "$c\n");
+}
+fclose($script);
+
+//exec("/usr/local/bin/lftp -f $script_name 2>&1", $output, $err);
+exec("/usr/local/bin/lftp -f $script_name", $output, $err);
+
+
+print("finished. see $script_name");
+print("\n");
+
+
+// username:password@machine:/folder options /absolute/path/to/local/files file1 file2
+
+// becomes
+
+//	debug
+//	open -u username,password machine
+//	prompt off
+//	lcd /absolute/path/to/local/files
+//	cd \"/folder\"
+//	put \"file1\" \"file1\"
+//	put \"file2\" \"file2\"
+//	exit
+
+
+
+//debug
+//open 192.168.1.102:1979
+//cd /data/notes/
+//lcd /home/xtd8865/notes/
+//put -a  sshX
+//quit
+
+//// Yay, now gotta write an 'expect' script file:
+//$expectFilename = tempnam("/tmp", "expect_commands");
+//$expectFile = fopen($expectFilename, "w");
+//fwrite($expectFile, "set timeout 120\n");
+//fwrite($expectFile, "spawn -noecho lftp $options $machine\n");
+//
+//$s = <<<EXPECTSTUFF
+//expect {
+//  "Name" { send "$user\r"; exp_continue }
+//  "Password:" { send "$password\r"; exp_continue }
+//  "password:" { send "$password\r"; exp_continue }
+//  "Permission denied" { exit 1 }
+//  "No such" { exit 1 }
+//  "lftp" { send "binary\r"  }
+//  timeout { send_error "lftp timeout\n"; exit 1 }
+//}
+//
+//EXPECTSTUFF;
+//fwrite($expectFile, $s);
+//foreach ($ftpCommands AS $command) {
+//  fwrite($expectFile, "expect {\n" );
+//  fwrite($expectFile, " \"lftp \" { send -- \"$command\r\" }\n" );
+//  fwrite($expectFile, " \"Permission denied\" { exit 1 }\n" );
+//  fwrite($expectFile, " \"No such\" { exit 1 }\n" );
+//  fwrite($expectFile, " timeout { send_error \"ftp timeout\\n\"; exit 1 } \n") ;
+//  fwrite($expectFile, "}\n" );
+//}
+//fwrite($expectFile, "exit 0\n");
+//fclose($expectFile);
+//
+//// To debug: un-comment out echo line, comment-out exec/unlink lines,
+//// then run expect manually to see what's going on:
+//echo "/usr/bin/expect -d -b $expectFilename\n";
+//exec("/usr/bin/expect -b $expectFilename 2>&1", $output, $err);
+////unlink($expectFilename);
+//
+//if ($err) {
+//   fwrite(STDERR, implode("\n", $output));
+//   exit($err);
+//}
+//
+function putFile(&$ftpCommands, $f, &$cwd)
+{
+  $d = dirname($f);
+  if ($d == "." or $d == "/") { $d = ""; }
+  $baseF = basename($f);
+  if ($d != $cwd) {
+    doDirectoryNonsense($ftpCommands, $d, $cwd);
+  }
+  $ftpCommands[] ="put \"$f\" \"$baseF\"";
+}
+
+// Create intermediate directories down to $d, and
+// change directory to d.
+function doDirectoryNonsense(&$ftpCommands, $d, &$cwd)
+{
+  if (empty($cwd)) { $dirs1 = array(); }
+  else {  $dirs1 = explode('/', $cwd); }
+  if (empty($d)) { $dirs2 = array(); }
+  else { $dirs2 = explode('/', $d); }
+
+  // Remove common ancestors:
+  while ((count($dirs1) > 0) && (count($dirs2) > 0) && ($dirs1[0] == $dirs2[0])) {
+    array_shift($dirs1);
+    array_shift($dirs2);
+  }
+  if (!empty($dirs1)) {
+    $up .= str_repeat("../", count($dirs1)); // Go up to common ancestor...
+    $ftpCommands[] ="cd $up";
+  }
+  if (!empty($dirs2)) {
+    foreach ($dirs2 AS $dd) {
+      $ftpCommands[] ="mkdir \"$dd\"";
+      $ftpCommands[] ="cd \"$dd\"";
+    }
+  }
+  $cwd = $d;
+}
+
+?>
