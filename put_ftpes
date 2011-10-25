@@ -6,8 +6,11 @@
 // USAGE:  put_ftp username:password@machine:/folder options /absolute/path/to/local/files file1 file2 file3...
 //   (password is optional if ssh/ftp has been setup to not require it)
 //
-// Creates a batch 'expect' script to feed commands to ftp.
+// Creates a script to feed commands to lftp.
 //
+
+$LFTP_BIN = '/usr/local/bin/lftp';
+
 if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
 
 $remoteStuff = $_SERVER['argv'][1];
@@ -52,13 +55,12 @@ array_shift($dirs); // Don't try to create root-level directory.
 //set ftp:passive-mode on
 //set ftp:ssl-force on
 //set ftp:ssl-allow on
-//open -u s194379,password server3900.bigcommerce.com
+//open -u username,password server.bigcommerce.com
 //lcd /Users/gary/repos/svn2web
 //cd "/content"
 //put "README" "README"
 //exit
 
-// Create list of FTP commands:
 $ftpCommands = array();
 //$ftpCommands[] = "debug";
 $ftpCommands[] = "set ftp:ssl-allow-anonymous yes";
@@ -67,7 +69,6 @@ $ftpCommands[] = "set ftp:passive-mode on";
 $ftpCommands[] = "set ftp:ssl-force on";
 $ftpCommands[] = "set ftp:ssl-allow on";
 $ftpCommands[] = "open -u $user,$password $machine";
-//$ftpCommands[] = "prompt off";
 $ftpCommands[] = "lcd $localStuff";
 // $ftpCommands[] = "!pwd";
 
@@ -89,13 +90,13 @@ foreach ($ftpCommands AS $c) {
 }
 fclose($script);
 
+print("Created script $script_name");
 //exec("/usr/local/bin/lftp -f $script_name 2>&1", $output, $err);
-exec("/usr/local/bin/lftp -f $script_name", $output, $err);
-
-
-print("finished. see $script_name");
-print("\n");
-
+exec("$LFTP_BIN -f $script_name", $output, $err);
+if ($err) {
+   fwrite(STDERR, implode("\n", $output));
+   exit($err);
+}
 
 // username:password@machine:/folder options /absolute/path/to/local/files file1 file2
 
@@ -110,56 +111,6 @@ print("\n");
 //	put \"file2\" \"file2\"
 //	exit
 
-
-
-//debug
-//open 192.168.1.102:1979
-//cd /data/notes/
-//lcd /home/xtd8865/notes/
-//put -a  sshX
-//quit
-
-//// Yay, now gotta write an 'expect' script file:
-//$expectFilename = tempnam("/tmp", "expect_commands");
-//$expectFile = fopen($expectFilename, "w");
-//fwrite($expectFile, "set timeout 120\n");
-//fwrite($expectFile, "spawn -noecho lftp $options $machine\n");
-//
-//$s = <<<EXPECTSTUFF
-//expect {
-//  "Name" { send "$user\r"; exp_continue }
-//  "Password:" { send "$password\r"; exp_continue }
-//  "password:" { send "$password\r"; exp_continue }
-//  "Permission denied" { exit 1 }
-//  "No such" { exit 1 }
-//  "lftp" { send "binary\r"  }
-//  timeout { send_error "lftp timeout\n"; exit 1 }
-//}
-//
-//EXPECTSTUFF;
-//fwrite($expectFile, $s);
-//foreach ($ftpCommands AS $command) {
-//  fwrite($expectFile, "expect {\n" );
-//  fwrite($expectFile, " \"lftp \" { send -- \"$command\r\" }\n" );
-//  fwrite($expectFile, " \"Permission denied\" { exit 1 }\n" );
-//  fwrite($expectFile, " \"No such\" { exit 1 }\n" );
-//  fwrite($expectFile, " timeout { send_error \"ftp timeout\\n\"; exit 1 } \n") ;
-//  fwrite($expectFile, "}\n" );
-//}
-//fwrite($expectFile, "exit 0\n");
-//fclose($expectFile);
-//
-//// To debug: un-comment out echo line, comment-out exec/unlink lines,
-//// then run expect manually to see what's going on:
-//echo "/usr/bin/expect -d -b $expectFilename\n";
-//exec("/usr/bin/expect -b $expectFilename 2>&1", $output, $err);
-////unlink($expectFilename);
-//
-//if ($err) {
-//   fwrite(STDERR, implode("\n", $output));
-//   exit($err);
-//}
-//
 function putFile(&$ftpCommands, $f, &$cwd)
 {
   $d = dirname($f);
@@ -186,7 +137,8 @@ function doDirectoryNonsense(&$ftpCommands, $d, &$cwd)
     array_shift($dirs2);
   }
   if (!empty($dirs1)) {
-    $up .= str_repeat("../", count($dirs1)); // Go up to common ancestor...
+	  //$up .= str_repeat("../", count($dirs1)); // Go up to common ancestor...
+	  $up = str_repeat("../", count($dirs1)); // Go up to common ancestor...
     $ftpCommands[] ="cd $up";
   }
   if (!empty($dirs2)) {
