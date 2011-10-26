@@ -13,14 +13,16 @@ $LFTP_BIN = '/usr/local/bin/lftp';
 
 if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
 
-$remoteStuff = $_SERVER['argv'][1];
-$options = $_SERVER['argv'][2];
-$localStuff = $_SERVER['argv'][3];
+$shellargs = clone $argv;
 
-array_shift($_SERVER['argv']); //remove the script filename
-array_shift($_SERVER['argv']); //remove the connection string (remoteStuff)
-array_shift($_SERVER['argv']); //remove the local dir
-array_shift($_SERVER['argv']); //remove the options
+$remoteStuff = $shellargs[1];
+$options = $shellargs[2];
+$localStuff = $shellargs[3];
+
+array_shift($shellargs); //remove the script filename
+array_shift($shellargs); //remove the connection string (remoteStuff)
+array_shift($shellargs); //remove the local dir
+array_shift($shellargs); //remove the options
 
 if (preg_match('/(.*):(.*)@(.*):(.*)/', $remoteStuff, $matches)) {
   $user = $matches[1];
@@ -35,7 +37,7 @@ elseif (preg_match('/(.*)@(.*):(.*)/', $remoteStuff, $matches)) {
   $dir = $matches[3];
 }
 else {
-  fwrite(STDERR, "$remoteStuff  must be:  user:password@machine:dir\nYou sent: {$_SERVER['argv']}\n");
+  fwrite(STDERR, "$remoteStuff  must be:  user:password@machine:dir\nYou sent: {$shellargs}\n");
   exit(1);
 }
 
@@ -77,7 +79,7 @@ foreach ($dirs AS $d) { // Simulate mkdir -p:
 }
 $ftpCommands[] ="cd \"$dir\"";
 $cwd = "";  // Keep track of current working directory...
-foreach ($_SERVER['argv'] AS $f) {
+foreach ($shellargs AS $f) {
   putFile($ftpCommands, $f, $cwd);  // Puts files, creating directories as needed
 }
 $ftpCommands[] ="exit";

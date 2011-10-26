@@ -9,9 +9,11 @@ $LFTP_BIN = '/usr/local/bin/lftp';
 
 if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
 
-$remoteStuff = $_SERVER['argv'][1];
-array_shift($_SERVER['argv']);
-array_shift($_SERVER['argv']);
+$shellargs = clone $argv;
+
+$remoteStuff = $shellargs[1];
+array_shift($shellargs);
+array_shift($shellargs);
 
 if (preg_match('/(.*):(.*)@(.*):(.*)/', $remoteStuff, $matches)) {
   $user = $matches[1];
@@ -26,7 +28,7 @@ elseif (preg_match('/(.*)@(.*):(.*)/', $remoteStuff, $matches)) {
   $dir = $matches[3];
 }
 else {
-  fwrite(STDERR, "$remoteStuff  must be:  user:password@machine:dir\nYou sent: {$_SERVER['argv']}\n");
+  fwrite(STDERR, "$remoteStuff  must be:  user:password@machine:dir\nYou sent: {$shellargs}\n");
   exit(1);
 }
 
@@ -40,7 +42,7 @@ $ftpCommands[] = "set ftp:ssl-allow on";
 $ftpCommands[] = "open -u $user,$password $machine";
 $ftpCommands[] = "cd ".escapeshellarg($dir);
 
-foreach ($_SERVER['argv'] AS $f) {
+foreach ($shellargs AS $f) {
   if (substr($f, -1) == "/") {
     $ftpCommands[] ="rm ".escapeshellarg("$f*");
     $ftpCommands[] ="rmdir ".escapeshellarg($f);
