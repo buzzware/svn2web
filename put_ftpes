@@ -8,13 +8,13 @@
 //
 // Creates a script to feed commands to lftp.
 //
+// ensure -d register_argc_argv=On
 
-$LFTP_BIN = '/usr/local/bin/lftp';
+$LFTP_BIN = 'lftp';
 
 if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
 
-$shellargs = clone $argv;
-
+$shellargs = $argv;
 $remoteStuff = $shellargs[1];
 $options = $shellargs[2];
 $localStuff = $shellargs[3];
@@ -70,6 +70,7 @@ $ftpCommands[] = "set ssl:verify-certificate off";
 $ftpCommands[] = "set ftp:passive-mode on";
 $ftpCommands[] = "set ftp:ssl-force on";
 $ftpCommands[] = "set ftp:ssl-allow on";
+$ftpCommands[] = "set net:timeout 60";
 $ftpCommands[] = "open -u $user,$password $machine";
 $ftpCommands[] = "lcd $localStuff";
 // $ftpCommands[] = "!pwd";
@@ -121,7 +122,7 @@ function putFile(&$ftpCommands, $f, &$cwd)
   if ($d != $cwd) {
     doDirectoryNonsense($ftpCommands, $d, $cwd);
   }
-  $ftpCommands[] ="put \"$f\" \"$baseF\"";
+  $ftpCommands[] ="put \"$f\" -o \"$baseF\"";
 }
 
 // Create intermediate directories down to $d, and
