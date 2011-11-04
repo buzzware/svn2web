@@ -1,5 +1,67 @@
 #!/usr/bin/php
 <?php
+error_reporting(E_ALL);
+
+interface IException {
+
+		// from http://php.net/manual/en/language.exceptions.php
+
+    /* Protected methods inherited from Exception class */
+    public function getMessage();                 // Exception message
+    public function getCode();                    // User-defined Exception code
+    public function getFile();                    // Source filename
+    public function getLine();                    // Source line
+    public function getTrace();                   // An array of the backtrace()
+    public function getTraceAsString();           // Formated string of trace
+
+    /* Overrideable methods inherited from Exception class */
+    public function __toString();                 // formated string for display
+    public function __construct($message = null, $code = 0);
+}
+
+abstract class CustomException extends Exception implements IException {
+
+    protected $message = 'Unknown exception';     // Exception message
+    private   $string;                            // Unknown
+    protected $code    = 0;                       // User-defined exception code
+    protected $file;                              // Source filename of exception
+    protected $line;                              // Source line of exception
+    private   $trace;                             // Unknown
+
+    public function __construct($message = null, $code = 0)
+    {
+        if (!$message) {
+            throw new $this('Unknown '. get_class($this));
+        }
+        parent::__construct($message, $code);
+    }
+
+    public function __toString()
+    {
+        return get_class($this) . " '{$this->message}' in {$this->file}({$this->line})\n"
+                                . "{$this->getTraceAsString()}";
+    }
+}
+
+class ExecException extends CustomException {}
+
+// Executes the given command and returns the result as a string, even if returned as array
+// If the exit code of the command is non-zero, it will die with the result as a message
+function execSafe($command,$workingFolder=null) {
+	$dir_before = getcwd();
+	if ($workingFolder)
+		chdir($workingFolder);
+	print $command."\n";
+	exec($command,$result,$retcode);
+	chdir($dir_before);
+	if (is_array($result))
+		$result = join("\n", $result);
+	print $result."\n";
+	if ($retcode)
+		throw new ExecException($command." failed (exit code ".$retcode.") result:\n".$result,$retcode);
+	return $result;
+}
+
 // if php is not running as CLI, STDERR is not defined by default and cause error (dont print the error on svn log)
 if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
 
@@ -27,7 +89,7 @@ else { // Used as pre-commit hook: given transaction name:
 }
           
 // First: use svnlook to get a list of the changed files/dirs:
-$changed = `svnlook changed $revOrTransaction $repository`;
+$changed = execSafe("svnlook changed $revOrTransaction $repository");
 
 $lines = explode("\n",$changed);
 
@@ -52,13 +114,13 @@ foreach ($lines AS $line) {
     if ($revision) { $prevRevision = $revision-1; }
     else { $prevRevision = intval($transaction); } // Will be, e.g. 20-1 
     list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache, $prevRevision);
+		$options = getSVN2WebOptionsProp($where, $repository, $prevRevision);
   }
   else {
     // Conscious decision here to use latest&greatest revision for what to copy where:
     list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache);
+		$options = getSVN2WebOptionsProp($where, $repository, $revision);
   }
-  // this get the svn2web-optiosn prop, is not very well testet yet...
-  $options = getSVN2WebOptionsProp($where, $repository, $prevRevision);
 
   if ($servers === null or empty($servers)) { continue; }
   
@@ -69,7 +131,7 @@ foreach ($lines AS $line) {
       $dirsAdded[$server][] = array($where, $relativePath."/");
       
       // use svnlook to get a list of the implicitly added files/dirs:
-      $subWhere = `svnlook tree --full-paths $revOrTransaction $repository $where`;
+      $subWhere = execSafe("svnlook tree --full-paths $revOrTransaction $repository $where");
       $subWheres = explode("\n",$subWhere);
       $extraWheres = array_merge($extraWheres, $subWheres);
     }
@@ -134,10 +196,10 @@ foreach ($todelete AS $server => $stuff) {
 
   // file: built-in, rest handled externally:
   if ($howToConnect == "file") {
-    echo `(cd $whereToConnect; rm -rf $deleteArgs)`;
+    echo execSafe("(cd $whereToConnect; rm -rf $deleteArgs)");
   }
   else {
-    echo `$thisDir/remove_$howToConnect $whereToConnect $deleteArgs`;
+    echo execSafe("$thisDir/remove_$howToConnect $whereToConnect $deleteArgs");
   }
 }
 
@@ -165,7 +227,7 @@ foreach ($tocopy AS $server => $stuff) {
       $rf = escapeshellarg($f[0]);
       $to = escapeshellarg($f[1]);
       if ($f[1][0] == ".") { $haveDotFile = true; }
-      `svnlook cat $revOrTransaction $repository $rf > $to`;
+      execSafe("svnlook cat $revOrTransaction $repository $rf > $to");
       $copyArgs .= " ".$to;
     }
   }
@@ -190,7 +252,7 @@ foreach ($tocopy AS $server => $stuff) {
   }
 }
 chdir("/");
-`rm -rf $tempDir`;
+execSafe("rm -rf $tempDir");
 
 if (!empty($errors)) {
    fwrite(STDERR, implode("\n", $errors));
@@ -234,11 +296,11 @@ function getSVN2WebProp($where, $repository, &$propCache, $revision=null)
   
   $w = escapeshellarg($where);
   $r = ""; if ($revision) { $r = "-r $revision"; }
-  $props = `svnlook proplist $r $repository $w`;
+  $props = execSafe("svnlook proplist $r $repository $w");
 
   $servers = null;
   if (strpos($props, 'svn2web') !== FALSE) {
-    $servers = `svnlook propget $r $repository svn2web $w`;
+    $servers = execSafe("svnlook propget $r $repository svn2web $w");
     $servers = trim($servers);
   }
   $result = array(null, null);
@@ -265,11 +327,11 @@ function getSVN2WebOptionsProp($where, $repository, $revision=null)
   
   $w = escapeshellarg(dirname($where));
   $r = ""; if ($revision) { $r = "-r $revision"; }
-  $props = `svnlook proplist $r $repository $w`;
+  $props = execSafe("svnlook proplist $r $repository $w");
 
   $options = null;
   if (strpos($props, 'svn2web-options') !== FALSE) {
-    $options = `svnlook propget $r $repository svn2web-options $w`;
+    $options = execSafe("svnlook propget $r $repository svn2web-options $w");
     $options = trim($options);
   } else { $options = ''; }
   return $options;

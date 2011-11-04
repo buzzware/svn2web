@@ -1,0 +1,9 @@
+#!/bin/sh
+# PRE-COMMIT HOOK
+REPOS="$1"
+TXN="$2"
+export PATH=/usr/local/bin:/usr/bin:/bin:/path/to/svn2web
+svn2web $REPOS $TXN 1>&2 >>/tmp/svn2web.log || exit 1	# STDOUT goes to STDERR, which goes to svn user
+#svn2web $REPOS $TXN 2>&1 >>/tmp/svn2web.log || exit 1	# original, sends STDERR to STDOUT, which goes to log
+exit 0
+

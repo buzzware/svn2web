@@ -9,7 +9,7 @@ $LFTP_BIN = '/usr/local/bin/lftp';
 
 if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
 
-$shellargs = clone $argv;
+$shellargs = $argv;
 
 $remoteStuff = $shellargs[1];
 array_shift($shellargs);
