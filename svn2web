@@ -62,6 +62,50 @@ function execSafe($command,$workingFolder=null) {
 	return $result;
 }
 
+function startsWith($haystack, $needle, $case=true) {
+	$length = strlen($needle);
+	$ss = substr($haystack, 0, $length);
+	if ($case)
+		return strcmp($ss,$needle)==0;
+	else
+		return strcasecmp($ss,$needle)==0;
+}
+
+function endsWith($haystack, $needle, $case=true) {
+	$length = strlen($needle);
+	$start =  $length *-1; //negative
+	$ss = substr($haystack, $start, $length);
+	if ($case)
+		return strcmp($ss,$needle)==0;
+	else
+		return strcasecmp($ss,$needle)==0;
+}
+
+function revOrTransactionForSvn($input) {
+	$result = $input;
+	if (preg_match('/^\d+$/', $input)) {
+		$result = "-r $input";
+	} else {
+		if (!startsWith($input,'-'))
+			$result = "-t $input";
+	}
+	return $result;
+}
+
+
+function svnlook(
+	$aCommand,
+	$aRepository,
+	$aRevOrTransaction,
+	$aRest=null
+) {
+	if (!$aRest)
+		$aRest = '';
+	$r = revOrTransactionForSvn($aRevOrTransaction);
+  return execSafe("svnlook $aCommand $r $aRepository $aRest");
+}
+
+
 // if php is not running as CLI, STDERR is not defined by default and cause error (dont print the error on svn log)
 if( !defined('STDERR') ) define(STDERR, fopen('php://stderr', 'w') );
 
@@ -89,7 +133,7 @@ else { // Used as pre-commit hook: given transaction name:
 }
           
 // First: use svnlook to get a list of the changed files/dirs:
-$changed = execSafe("svnlook changed $revOrTransaction $repository");
+$changed = svnlook('changed',$repository,$revOrTransaction);
 
 $lines = explode("\n",$changed);
 
@@ -131,7 +175,7 @@ foreach ($lines AS $line) {
       $dirsAdded[$server][] = array($where, $relativePath."/");
       
       // use svnlook to get a list of the implicitly added files/dirs:
-      $subWhere = execSafe("svnlook tree --full-paths $revOrTransaction $repository $where");
+      $subWhere = svnlook('tree',$repository,$revOrTransaction,"--full-paths $where");  // execSafe("svnlook tree --full-paths $revOrTransaction $repository $where");
       $subWheres = explode("\n",$subWhere);
       $extraWheres = array_merge($extraWheres, $subWheres);
     }
@@ -227,7 +271,7 @@ foreach ($tocopy AS $server => $stuff) {
       $rf = escapeshellarg($f[0]);
       $to = escapeshellarg($f[1]);
       if ($f[1][0] == ".") { $haveDotFile = true; }
-      execSafe("svnlook cat $revOrTransaction $repository $rf > $to");
+      svnlook('cat',$repository,$revOrTransaction,"$rf > $to"); //execSafe("svnlook cat $revOrTransaction $repository $rf > $to");
       $copyArgs .= " ".$to;
     }
   }
@@ -295,12 +339,13 @@ function getSVN2WebProp($where, $repository, &$propCache, $revision=null)
   if (isset($propCache[$where])) { return $propCache[$where]; }
   
   $w = escapeshellarg($where);
+	// !!! should do something about transactions here
   $r = ""; if ($revision) { $r = "-r $revision"; }
-  $props = execSafe("svnlook proplist $r $repository $w");
+  $props = svnlook('proplist',$repository,$r,$w);	//execSafe("svnlook proplist $r $repository $w");
 
   $servers = null;
   if (strpos($props, 'svn2web') !== FALSE) {
-    $servers = execSafe("svnlook propget $r $repository svn2web $w");
+    $servers = svnlook('propget',$repository,$r,"svn2web $w");	//execSafe("svnlook propget $r $repository svn2web $w");
     $servers = trim($servers);
   }
   $result = array(null, null);
@@ -326,12 +371,13 @@ function getSVN2WebOptionsProp($where, $repository, $revision=null)
   if (empty($where)) { return array(null, null); }
   
   $w = escapeshellarg(dirname($where));
+	//!!! should deal with transactions here
   $r = ""; if ($revision) { $r = "-r $revision"; }
-  $props = execSafe("svnlook proplist $r $repository $w");
+  $props = svnlook('proplist',$repository,$r,$w) //execSafe("svnlook proplist $r $repository $w");
 
   $options = null;
   if (strpos($props, 'svn2web-options') !== FALSE) {
-    $options = execSafe("svnlook propget $r $repository svn2web-options $w");
+    $options = svnlook('propget',$repository,$r,"svn2web-options $w"); //execSafe("svnlook propget $r $repository svn2web-options $w");
     $options = trim($options);
   } else { $options = ''; }
   return $options;
