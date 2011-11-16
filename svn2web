@@ -286,24 +286,19 @@ foreach ($tocopy AS $server => $stuff) {
   // file: built-in, rest handled externally:
   if ($howToConnect == "file") {
     if (!is_dir($whereToConnect)) {
-      //runCommand("mkdir -p $whereToConnect", $errors);
 			execSafe("mkdir -p $whereToConnect");
     }
     if (!empty($dirsToCreate)) {
-      //runCommand("cd $whereToConnect && mkdir -p $dirsToCreate", $errors);
 			execSafe("cd $whereToConnect && mkdir -p $dirsToCreate");
     }
     if (!empty($copyArgs)) {
-      //runCommand("cp -r * $whereToConnect", $errors);
 			execSafe("cp -r * $whereToConnect");
       if ($haveDotFile) {
-        //runCommand("cp -r .??* $whereToConnect", $errors);
 				execSafe("cp -r * $whereToConnect");
       }
     }
   }
   else {
-    //runCommand("$thisDir/put_$howToConnect $whereToConnect ".escapeshellarg($options)." ".escapeshellarg($tempDir)." $copyArgs", $errors);
 		execSafe("$thisDir/put_$howToConnect $whereToConnect ".escapeshellarg($options)." ".escapeshellarg($tempDir)." $copyArgs");
   }
 }
