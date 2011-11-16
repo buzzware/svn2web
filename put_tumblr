@@ -1,0 +1,69 @@
+#!/usr/bin/ruby
+#
+# USAGE:  put_tumblr username:password@machine options /absolute/path/to/local/files file1 file2 file3...
+# EG: tumblr:fred@mail.com:password@name.tumblr.com
+
+begin
+
+	require 'rubygems'
+	gem 'buzzcore'; require 'buzzcore'
+	gem 'json'; require 'json'
+	gem 'mechanize'; require 'mechanize'
+	
+	options=ARGV[1]
+	source_folder=ARGV[2]
+	files=ARGV[3..-1]			# ignored - we always send theme.js and template.html
+	 
+	dest_parts = ARGV[0].split ':'
+	email=dest_parts[0]
+	password,domain=dest_parts[1].split '@'
+	blogname=domain.chomp '.tumblr.com'
+	
+	# should validate inputs here, and return errors appropriately
+	
+	agent = Mechanize.new do |a|
+	#      a.log = Logger.new("mech.log")
+	#      a.log.level = Logger::DEBUG
+		a.redirect_ok = true
+		a.user_agent_alias = 'Windows Mozilla'
+	end
+	# Is the domain any good? This will raise 404 error if bad.
+	puts 'check domain'
+	agent.get("http://#{domain}")
+	puts 'get login page'
+	page = agent.get('http://www.tumblr.com/login')
+	login_form = page.forms[1]
+	#login_form['user[email]'] = email
+	#login_form['user[password]'] = password
+	login_form['email'] = email
+	login_form['password'] = password
+	puts 'submit login'
+	result = login_form.submit(login_form.buttons.first)
+	raise "Bad username or password" unless "Logging in..." == result.title
+	puts 'seem to have logged in'
+	if File.exists?(fnTheme = File.join(source_folder,'theme.js'))
+		puts 'theme.js not changed in svn, so use it'
+		theme = MiscUtils.string_from_file(fnTheme)
+	else
+		puts 'theme.js not changed in svn, so get latest from tumblr'
+		theme = agent.get("/customize_api/blog/#{blogname}").body
+	end
+	jsoTheme = JSON.parse(theme)
+	sNewThemeHtml = MiscUtils.string_from_file(File.join(source_folder,'template.html'))
+	jsoTheme['custom_theme'] = sNewThemeHtml
+	jsNewTheme = JSON.generate(jsoTheme)
+	
+	# post back to /customize_api/blog/gazthemetest
+	# agent.post('http://example.com/', "<message>hello</message>", 'Content-Type' => 'application/xml')
+	puts 'post theme with template inside '
+	response = agent.post("http://www.tumblr.com/customize_api/blog/#{blogname}",jsNewTheme,'Content-Type' => 'application/json')
+	raise "Failed saving theme" unless response.code=='200'
+	
+	puts 'finished'
+	exit 0
+
+rescue
+	$stderr.print $!
+	exit 1
+end
+

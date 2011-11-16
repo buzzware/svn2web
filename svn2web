@@ -132,6 +132,10 @@ else { // Used as pre-commit hook: given transaction name:
   $revOrTransaction = "-t $transaction";
 }
           
+echo "revision=$revision\n";
+echo "transaction=$transaction\n";
+echo "revOrTransaction=$revOrTransaction\n";
+          
 // First: use svnlook to get a list of the changed files/dirs:
 $changed = svnlook('changed',$repository,$revOrTransaction);
 
@@ -155,15 +159,18 @@ foreach ($lines AS $line) {
   // For deleted stuff: wanna use previous (before-deleted) revision to get
   // svn2web property:
   if ($what == "D") {
-    if ($revision) { $prevRevision = $revision-1; }
-    else { $prevRevision = intval($transaction); } // Will be, e.g. 20-1 
+    if ($revision) { 
+			$prevRevision = $revision-1; 
+		} else { 
+			$prevRevision = intval($transaction); 
+		} // Will be, e.g. 20-1
     list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache, $prevRevision);
 		$options = getSVN2WebOptionsProp($where, $repository, $prevRevision);
   }
   else {
     // Conscious decision here to use latest&greatest revision for what to copy where:
-    list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache);
-		$options = getSVN2WebOptionsProp($where, $repository, $revision);
+    list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache, $revOrTransaction);
+		$options = getSVN2WebOptionsProp($where, $repository, $revOrTransaction);
   }
 
   if ($servers === null or empty($servers)) { continue; }
@@ -206,7 +213,7 @@ foreach ($extraWheres AS $where) {
   $is_dir = (substr($where, -1) == "/");
 
   // Conscious decision here to use latest&greatest revision for what to copy where:
-  list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache);
+  list($servers, $relativePath) = getSVN2WebProp($where, $repository, $propCache, $revOrTransaction);
 
   if ($servers === null or empty($servers)) { continue; }
   
@@ -279,29 +286,38 @@ foreach ($tocopy AS $server => $stuff) {
   // file: built-in, rest handled externally:
   if ($howToConnect == "file") {
     if (!is_dir($whereToConnect)) {
-      runCommand("mkdir -p $whereToConnect", $errors);
+      //runCommand("mkdir -p $whereToConnect", $errors);
+			execSafe("mkdir -p $whereToConnect");
     }
     if (!empty($dirsToCreate)) {
-      runCommand("cd $whereToConnect && mkdir -p $dirsToCreate", $errors);
+      //runCommand("cd $whereToConnect && mkdir -p $dirsToCreate", $errors);
+			execSafe("cd $whereToConnect && mkdir -p $dirsToCreate");
     }
     if (!empty($copyArgs)) {
-      runCommand("cp -r * $whereToConnect", $errors);
+      //runCommand("cp -r * $whereToConnect", $errors);
+			execSafe("cp -r * $whereToConnect");
       if ($haveDotFile) {
-        runCommand("cp -r .??* $whereToConnect", $errors);
+        //runCommand("cp -r .??* $whereToConnect", $errors);
+				execSafe("cp -r * $whereToConnect");
       }
     }
   }
   else {
-    runCommand("$thisDir/put_$howToConnect $whereToConnect ".escapeshellarg($options)." ".escapeshellarg($tempDir)." $copyArgs", $errors);
+    //runCommand("$thisDir/put_$howToConnect $whereToConnect ".escapeshellarg($options)." ".escapeshellarg($tempDir)." $copyArgs", $errors);
+		execSafe("$thisDir/put_$howToConnect $whereToConnect ".escapeshellarg($options)." ".escapeshellarg($tempDir)." $copyArgs");
   }
 }
 chdir("/");
 execSafe("rm -rf $tempDir");
 
+/*
+print_r($errors);
+
 if (!empty($errors)) {
    fwrite(STDERR, implode("\n", $errors));
    exit(1);
 }
+*/
 exit(0);
 
 /**
@@ -333,19 +349,17 @@ function MakeDirectory($dir, $mode = 0755)
  * relative path from where that property is set in the tree down
  * to $where.  Returns array(null,null) if no svn2web properties set.
  */
-function getSVN2WebProp($where, $repository, &$propCache, $revision=null)
+function getSVN2WebProp($where, $repository, &$propCache, $aRevOrTransaction=null)
 {
   if (empty($where)) { return array(null, null); }
   if (isset($propCache[$where])) { return $propCache[$where]; }
   
   $w = escapeshellarg($where);
-	// !!! should do something about transactions here
-  $r = ""; if ($revision) { $r = "-r $revision"; }
-  $props = svnlook('proplist',$repository,$r,$w);	//execSafe("svnlook proplist $r $repository $w");
+  $props = svnlook('proplist',$repository,$aRevOrTransaction,$w);	//execSafe("svnlook proplist $r $repository $w");
 
   $servers = null;
   if (strpos($props, 'svn2web') !== FALSE) {
-    $servers = svnlook('propget',$repository,$r,"svn2web $w");	//execSafe("svnlook propget $r $repository svn2web $w");
+    $servers = svnlook('propget',$repository,$aRevOrTransaction,"svn2web $w");	//execSafe("svnlook propget $r $repository svn2web $w");
     $servers = trim($servers);
   }
   $result = array(null, null);
@@ -354,7 +368,7 @@ function getSVN2WebProp($where, $repository, &$propCache, $revision=null)
      $result[1] = "";
   }
   elseif (dirname($where) != $where) {
-    $r = getSVN2WebProp(dirname($where), $repository, $propCache, $revision);
+    $r = getSVN2WebProp(dirname($where), $repository, $propCache, $aRevOrTransaction);
     if ($r[0]) {
       $f = basename($where);
       $result[0] = $r[0];
@@ -366,18 +380,16 @@ function getSVN2WebProp($where, $repository, &$propCache, $revision=null)
 }
 
 //Alpha function to add options to svn, not yet documented
-function getSVN2WebOptionsProp($where, $repository, $revision=null)
+function getSVN2WebOptionsProp($where, $repository, $aRevOrTransaction=null)
 {
   if (empty($where)) { return array(null, null); }
   
   $w = escapeshellarg(dirname($where));
-	//!!! should deal with transactions here
-  $r = ""; if ($revision) { $r = "-r $revision"; }
-  $props = svnlook('proplist',$repository,$r,$w) //execSafe("svnlook proplist $r $repository $w");
+  $props = svnlook('proplist',$repository,$aRevOrTransaction,$w); //execSafe("svnlook proplist $r $repository $w");
 
   $options = null;
   if (strpos($props, 'svn2web-options') !== FALSE) {
-    $options = svnlook('propget',$repository,$r,"svn2web-options $w"); //execSafe("svnlook propget $r $repository svn2web-options $w");
+    $options = svnlook('propget',$repository,$aRevOrTransaction,"svn2web-options $w"); //execSafe("svnlook propget $r $repository svn2web-options $w");
     $options = trim($options);
   } else { $options = ''; }
   return $options;
